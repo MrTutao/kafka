@@ -21,12 +21,14 @@ import java.util
 import java.util.Properties
 
 import kafka.utils.TestUtils
+import kafka.zk.KafkaZkClient
 import org.apache.kafka.common.Reconfigurable
 import org.apache.kafka.common.config.types.Password
 import org.apache.kafka.common.config.{ConfigException, SslConfigs}
 import org.easymock.EasyMock
 import org.junit.Assert._
 import org.junit.Test
+import org.scalatest.Assertions.intercept
 
 import scala.collection.JavaConverters._
 import scala.collection.Set
@@ -127,6 +129,35 @@ class DynamicBrokerConfigTest {
   }
 
   @Test
+  def testReconfigurableValidation(): Unit = {
+    val origProps = TestUtils.createBrokerConfig(0, TestUtils.MockZkConnect, port = 8181)
+    val config = KafkaConfig(origProps)
+    val invalidReconfigurableProps = Set(KafkaConfig.LogCleanerThreadsProp, KafkaConfig.BrokerIdProp, "some.prop")
+    val validReconfigurableProps = Set(KafkaConfig.LogCleanerThreadsProp, KafkaConfig.LogCleanerDedupeBufferSizeProp, "some.prop")
+
+    def createReconfigurable(configs: Set[String]) = new Reconfigurable {
+      override def configure(configs: util.Map[String, _]): Unit = {}
+      override def reconfigurableConfigs(): util.Set[String] = configs.asJava
+      override def validateReconfiguration(configs: util.Map[String, _]): Unit = {}
+      override def reconfigure(configs: util.Map[String, _]): Unit = {}
+    }
+    intercept[IllegalArgumentException] {
+      config.dynamicConfig.addReconfigurable(createReconfigurable(invalidReconfigurableProps))
+    }
+    config.dynamicConfig.addReconfigurable(createReconfigurable(validReconfigurableProps))
+
+    def createBrokerReconfigurable(configs: Set[String]) = new BrokerReconfigurable {
+      override def reconfigurableConfigs: collection.Set[String] = configs
+      override def validateReconfiguration(newConfig: KafkaConfig): Unit = {}
+      override def reconfigure(oldConfig: KafkaConfig, newConfig: KafkaConfig): Unit = {}
+    }
+    intercept[IllegalArgumentException] {
+      config.dynamicConfig.addBrokerReconfigurable(createBrokerReconfigurable(invalidReconfigurableProps))
+    }
+    config.dynamicConfig.addBrokerReconfigurable(createBrokerReconfigurable(validReconfigurableProps))
+  }
+
+  @Test
   def testSecurityConfigs(): Unit = {
     def verifyUpdate(name: String, value: Object): Unit = {
       verifyConfigUpdate(name, value, perBrokerConfig = true, expectFailure = true)
@@ -139,6 +170,28 @@ class DynamicBrokerConfigTest {
     verifyUpdate(SslConfigs.SSL_KEYSTORE_TYPE_CONFIG, "JKS")
     verifyUpdate(SslConfigs.SSL_KEYSTORE_PASSWORD_CONFIG, "password")
     verifyUpdate(SslConfigs.SSL_KEY_PASSWORD_CONFIG, "password")
+  }
+
+  @Test
+  def testConnectionQuota(): Unit = {
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsPerIpProp, "100", perBrokerConfig = true, expectFailure = false)
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsPerIpProp, "100", perBrokerConfig = false, expectFailure = false)
+    //MaxConnectionsPerIpProp can be set to zero only if MaxConnectionsPerIpOverridesProp property is set
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsPerIpProp, "0", perBrokerConfig = false, expectFailure = true)
+
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsPerIpOverridesProp, "hostName1:100,hostName2:0", perBrokerConfig = true,
+      expectFailure = false)
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsPerIpOverridesProp, "hostName1:100,hostName2:0", perBrokerConfig = false,
+      expectFailure = false)
+    //test invalid address
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsPerIpOverridesProp, "hostName#:100", perBrokerConfig = true,
+      expectFailure = true)
+
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsProp, "100", perBrokerConfig = true, expectFailure = false)
+    verifyConfigUpdate(KafkaConfig.MaxConnectionsProp, "100", perBrokerConfig = false, expectFailure = false)
+    val listenerMaxConnectionsProp = s"listener.name.external.${KafkaConfig.MaxConnectionsProp}"
+    verifyConfigUpdate(listenerMaxConnectionsProp, "10", perBrokerConfig = true, expectFailure = false)
+    verifyConfigUpdate(listenerMaxConnectionsProp, "10", perBrokerConfig = false, expectFailure = false)
   }
 
   private def verifyConfigUpdate(name: String, value: Object, perBrokerConfig: Boolean, expectFailure: Boolean) {
@@ -257,7 +310,7 @@ class DynamicBrokerConfigTest {
   def testDynamicListenerConfig(): Unit = {
     val props = TestUtils.createBrokerConfig(0, TestUtils.MockZkConnect, port = 9092)
     val oldConfig =  KafkaConfig.fromProps(props)
-    val kafkaServer = EasyMock.createMock(classOf[kafka.server.KafkaServer])
+    val kafkaServer: KafkaServer = EasyMock.createMock(classOf[kafka.server.KafkaServer])
     EasyMock.expect(kafkaServer.config).andReturn(oldConfig).anyTimes()
     EasyMock.replay(kafkaServer)
 
@@ -282,7 +335,7 @@ class DynamicBrokerConfigTest {
 
   @Test
   def testDynamicConfigInitializationWithoutConfigsInZK(): Unit = {
-    val zkClient = EasyMock.createMock(classOf[kafka.zk.KafkaZkClient])
+    val zkClient: KafkaZkClient = EasyMock.createMock(classOf[KafkaZkClient])
     EasyMock.expect(zkClient.getEntityConfigs(EasyMock.anyString(), EasyMock.anyString())).andReturn(new java.util.Properties()).anyTimes()
     EasyMock.replay(zkClient)
 
