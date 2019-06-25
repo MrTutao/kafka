@@ -35,11 +35,13 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -433,6 +435,10 @@ public class TestUtils {
         return list;
     }
 
+    public static <T> Set<T> toSet(Collection<T> collection) {
+        return new HashSet<>(collection);
+    }
+
     public static ByteBuffer toBuffer(Struct struct) {
         ByteBuffer buffer = ByteBuffer.allocate(struct.sizeOf());
         struct.writeTo(buffer);
@@ -462,6 +468,17 @@ public class TestUtils {
             assertion.accept(optional.get());
         } else {
             fail("Missing value from Optional");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T fieldValue(Object o, Class<?> clazz, String fieldName)  {
+        try {
+            Field field = clazz.getDeclaredField(fieldName);
+            field.setAccessible(true);
+            return (T) field.get(o);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 }
