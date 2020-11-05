@@ -408,7 +408,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 firstException.compareAndSet(null, invokePartitionsRevoked(revokedPartitions));
 
                 // If revoked any partitions, need to re-join the group afterwards
-                log.debug("Need to revoke partitions {} and re-join the group", revokedPartitions);
+                log.info("Need to revoke partitions {} and re-join the group", revokedPartitions);
                 requestRejoin();
             }
         }
@@ -450,11 +450,6 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             // changes that would require a rebalance (e.g. new partitions).
             metadataSnapshot = new MetadataSnapshot(subscriptions, cluster, version);
         }
-    }
-
-    // for testing
-    boolean poll(Timer timer) {
-        return poll(timer, true);
     }
 
     /**
@@ -511,6 +506,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
                 // if not wait for join group, we would just use a timer of 0
                 if (!ensureActiveGroup(waitForJoinGroup ? timer : time.timer(0L))) {
+                    // since we may use a different timer in the callee, we'd still need
+                    // to update the original timer's current time after the call
+                    timer.update(time.milliseconds());
+
                     return false;
                 }
             }
@@ -532,7 +531,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     }
 
     /**
-     * Return the time to the next needed invocation of {@link #poll(Timer)}.
+     * Return the time to the next needed invocation of {@link ConsumerNetworkClient#poll(Timer)}.
      * @param now current time in milliseconds
      * @return the maximum time in milliseconds the caller should wait before the next invocation of poll()
      */
@@ -770,12 +769,18 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         // we need to rejoin if we performed the assignment and metadata has changed;
         // also for those owned-but-no-longer-existed partitions we should drop them as lost
         if (assignmentSnapshot != null && !assignmentSnapshot.matches(metadataSnapshot)) {
+            log.info("Requesting to re-join the group and trigger rebalance since the assignment metadata has changed from {} to {}",
+                    assignmentSnapshot, metadataSnapshot);
+
             requestRejoin();
             return true;
         }
 
         // we need to join if our subscription has changed since the last join
         if (joinedSubscription != null && !joinedSubscription.equals(subscriptions.subscription())) {
+            log.info("Requesting to re-join the group and trigger rebalance since the subscription has changed from {} to {}",
+                joinedSubscription, subscriptions.subscription());
+
             requestRejoin();
             return true;
         }
@@ -1213,7 +1218,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                             if (generationUnchanged()) {
                                 future.raise(error);
                             } else {
-                                if (ConsumerCoordinator.this.state == MemberState.REBALANCING) {
+                                if (ConsumerCoordinator.this.state == MemberState.PREPARING_REBALANCE) {
                                     future.raise(new RebalanceInProgressException("Offset commit cannot be completed since the " +
                                         "consumer member's old generation is fenced by its group instance id, it is possible that " +
                                         "this consumer has already participated another rebalance and got a new generation"));
@@ -1242,7 +1247,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
                             // only need to reset generation and re-join group if generation has not changed or we are not in rebalancing;
                             // otherwise only raise rebalance-in-progress error
-                            if (!generationUnchanged() && ConsumerCoordinator.this.state == MemberState.REBALANCING) {
+                            if (!generationUnchanged() && ConsumerCoordinator.this.state == MemberState.PREPARING_REBALANCE) {
                                 future.raise(new RebalanceInProgressException("Offset commit cannot be completed since the " +
                                     "consumer member's generation is already stale, meaning it has already participated another rebalance and " +
                                     "got a new generation. You can try completing the rebalance by calling poll() and then retry commit again"));
@@ -1436,6 +1441,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             return version == other.version || partitionsPerTopic.equals(other.partitionsPerTopic);
         }
 
+        @Override
+        public String toString() {
+            return "(version" + version + ": " + partitionsPerTopic + ")";
+        }
     }
 
     private static class OffsetCommitCompletion {
@@ -1458,5 +1467,9 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     /* test-only classes below */
     RebalanceProtocol getProtocol() {
         return protocol;
+    }
+
+    boolean poll(Timer timer) {
+        return poll(timer, true);
     }
 }
