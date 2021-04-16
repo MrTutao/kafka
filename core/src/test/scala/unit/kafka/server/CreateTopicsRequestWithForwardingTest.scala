@@ -17,23 +17,18 @@
 
 package kafka.server
 
-import java.util.Properties
-
 import org.apache.kafka.common.protocol.Errors
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
 
 import scala.jdk.CollectionConverters._
 
-class CreateTopicsRequestWithForwardingTest extends CreateTopicsRequestTest {
+class CreateTopicsRequestWithForwardingTest extends AbstractCreateTopicsRequestTest {
 
-  override def brokerPropertyOverrides(properties: Properties): Unit = {
-    super.brokerPropertyOverrides(properties)
-    properties.put(KafkaConfig.EnableMetadataQuorumProp, true.toString)
-  }
+  override def enableForwarding: Boolean = true
 
   @Test
-  override def testNotController(): Unit = {
+  def testForwardToController(): Unit = {
     val req = topicsReq(Seq(topicReq("topic1")))
     val response = sendCreateTopicRequest(req, notControllerSocketServer)
     // With forwarding enabled, request could be forwarded to the active controller.
